@@ -1,4 +1,4 @@
-# app.py
+# app.py (con funcionalidad de descarga)
 
 # -*- coding: utf-8 -*-
 import os
@@ -9,8 +9,10 @@ import io
 import time
 import json
 import html
+import tempfile # <--- CAMBIO 1: Importamos la librería para archivos temporales
 
 # --- LISTA DE VERIFICACIÓN (CONSTANTE) ---
+# (Esta sección no cambia)
 CHECKLIST_ITEMS = [
     "Objeto Contractual", "Contenido presupuestario", "Garantía de cumplimiento",
     "Especies fiscales y timbres (específicamente el Timbre de la Asociación Ciudad de las Niñas)",
@@ -22,12 +24,11 @@ CHECKLIST_ITEMS = [
     "Apostillado de documentos públicos emitidos en el extranjero"
 ]
 
-# --- FUNCIONES DE PROCESAMIENTO DE PDF Y ANÁLISIS ---
-
+# --- (Todas las funciones de procesamiento como extract_text_from_pdf_bytes, 
+# --- analyze_requirement, generate_summary y create_html_report no cambian) ---
 def extract_text_from_pdf_bytes(pdf_file):
-    """Extrae texto de un objeto de archivo subido por Gradio."""
     try:
-        pdf_reader = pypdf.PdfReader(pdf_file.name) # Gradio pasa el path del archivo temporal
+        pdf_reader = pypdf.PdfReader(pdf_file.name)
         text = ""
         for page in pdf_reader.pages:
             text += page.extract_text()
@@ -36,7 +37,6 @@ def extract_text_from_pdf_bytes(pdf_file):
         return f"Error al leer el archivo PDF: {e}"
 
 def analyze_requirement(model, requirement, consolidated_text, filename1, filename2):
-    """Función para analizar un requisito específico usando el modelo de IA."""
     prompt = f"""
     Eres un asistente experto en la revisión de pliegos de condiciones de contratación administrativa en Costa Rica.
     Tu tarea es analizar el texto de dos documentos para verificar un requisito.
@@ -70,7 +70,6 @@ def analyze_requirement(model, requirement, consolidated_text, filename1, filena
         return {"encontrado": "Error", "archivo": "N/A", "clausula": "Error en API", "texto_relevante": str(e)}
 
 def generate_summary(model, consolidated_text):
-    """Genera el resumen ejecutivo."""
     prompt = f"""
     Eres un asistente experto en contratación administrativa. Basado en el texto proporcionado,
     genera un resumen conciso que incluya: Objeto, Plazo y prórrogas, Presupuesto,
@@ -84,7 +83,6 @@ def generate_summary(model, consolidated_text):
         return f"No se pudo generar el resumen debido a un error: {e}"
 
 def create_html_report(summary, checklist_results):
-    """Crea el contenido HTML del reporte y lo devuelve como un string."""
     summary_html = ""
     for line in summary.split('\n'):
         if line.strip().startswith('-'):
@@ -154,9 +152,9 @@ def create_html_report(summary, checklist_results):
     </html>
     """
 
-# --- FUNCIÓN PRINCIPAL PARA GRADIO ---
+
+# --- FUNCIÓN PRINCIPAL PARA GRADIO (MODIFICADA) ---
 def process_documents(api_key, file1, file2, progress=gr.Progress()):
-    """Función que Gradio llamará para procesar los archivos y generar el reporte."""
     if not api_key:
         raise gr.Error("Error de Autenticación", "Por favor, ingresa tu Google API Key.")
     if file1 is None or file2 is None:
@@ -194,9 +192,16 @@ def process_documents(api_key, file1, file2, progress=gr.Progress()):
     progress(0.95, desc="Generando reporte final...")
     html_report = create_html_report(summary, final_results)
     
-    return html_report
+    # --- CAMBIO 2: Guardar el reporte en un archivo temporal ---
+    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as temp_file:
+        temp_file.write(html_report)
+        # Gradio necesita la ruta del archivo para crear el enlace de descarga
+        temp_filepath = temp_file.name
 
-# --- INTERFAZ DE GRADIO ---
+    # --- CAMBIO 3: Retornar tanto el HTML para visualizar como la ruta del archivo para descargar ---
+    return html_report, temp_filepath
+
+# --- INTERFAZ DE GRADIO (MODIFICADA) ---
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", secondary_hue="neutral"), title="Revisor CGR") as demo:
     gr.Markdown(
         """
@@ -211,27 +216,27 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", secondary_hue="neutral")
         with gr.Column(scale=1):
             gr.Markdown("### ⚙️ Configuración y Archivos")
             api_key_input = gr.Textbox(
-                label="Google AI API Key",
-                type="password",
-                placeholder="Pega tu clave de API aquí...",
+                label="Google AI API Key", type="password", placeholder="Pega tu clave de API aquí...",
                 info="Puedes obtener tu clave en Google AI Studio."
             )
             file_input1 = gr.File(label="1. Resumen del Sistema (SICOP)", file_types=[".pdf"])
             file_input2 = gr.File(label="2. Pliego de Condiciones (Cartel)", file_types=[".pdf"])
-            
             submit_btn = gr.Button("Analizar Documentos", variant="primary")
             
         with gr.Column(scale=3):
             gr.Markdown("### 📋 Reporte Generado")
-            output_html = gr.HTML(label="Resultado del Análisis")
+            output_html = gr.HTML(label="Vista Previa del Reporte")
+            # --- CAMBIO 4: Añadir un componente de archivo para la descarga ---
+            download_file = gr.File(label="Descargar Reporte Completo", interactive=False)
 
+    # --- CAMBIO 5: Actualizar el evento click para que maneje dos salidas ---
     submit_btn.click(
         fn=process_documents,
         inputs=[api_key_input, file_input1, file_input2],
-        outputs=[output_html]
+        outputs=[output_html, download_file] # La primera salida va al HTML, la segunda al File
     )
 
-# --- PUNTO CLAVE PARA CLOUD RUN ---
+# --- (El bloque if __name__ == "__main__": sigue igual) ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 7860))
     demo.launch(server_name="0.0.0.0", server_port=port)
