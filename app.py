@@ -1,5 +1,5 @@
 
-# app.py (con funcionalidad de descarga y mensajes de avance en la UI)
+# app.py (con descarga de reporte y mensajes de avance)
 
 import os
 import gradio as gr
@@ -9,10 +9,9 @@ import io
 import time
 import json
 import html
-import tempfile
+import tempfile # <--- CAMBIO 1: Asegurarnos de importar la librería
 
 # --- LISTA DE VERIFICACIÓN (CONSTANTE) ---
-# (Esta sección no cambia)
 CHECKLIST_ITEMS = [
     "Objeto Contractual", "Contenido presupuestario", "Garantía de cumplimiento",
     "Especies fiscales y timbres (específicamente el Timbre de la Asociación Ciudad de las Niñas)",
@@ -24,7 +23,7 @@ CHECKLIST_ITEMS = [
     "Apostillado de documentos públicos emitidos en el extranjero"
 ]
 
-# --- (Todas las funciones de procesamiento no cambian) ---
+# --- (Las funciones de procesamiento como extract_text, analyze_requirement, etc. no cambian) ---
 def extract_text_from_pdf_bytes(pdf_file):
     try:
         pdf_reader = pypdf.PdfReader(pdf_file.name)
@@ -151,14 +150,14 @@ def create_html_report(summary, checklist_results):
     </html>
     """
 
-# --- FUNCIÓN PRINCIPAL CONVERTIDA EN GENERADOR (yield) ---
-# <--- CAMBIO 1: La función ya no necesita el argumento "progress" ---
+
+# --- FUNCIÓN PRINCIPAL (GENERADOR) ---
 def process_documents(api_key, file1, file2):
     # Valores iniciales para los componentes de salida
     no_report = " "
     no_file = None
     
-    yield no_report, no_file, "Iniciando proceso..." # <--- CAMBIO 2: Primer mensaje de estado
+    yield no_report, no_file, "Iniciando proceso..."
 
     if not api_key:
         raise gr.Error("Error de Autenticación", "Por favor, ingresa tu Google API Key.")
@@ -171,7 +170,7 @@ def process_documents(api_key, file1, file2):
     except Exception as e:
         raise gr.Error("Error de API", f"No se pudo configurar la API de Gemini. Verifica tu clave. Error: {e}")
 
-    yield no_report, no_file, "Extrayendo texto del primer archivo..." # <--- CAMBIO 3: Mensajes de avance con yield
+    yield no_report, no_file, "Extrayendo texto del primer archivo..."
     filename1 = os.path.basename(file1.name)
     text1 = extract_text_from_pdf_bytes(file1)
     if text1.startswith("Error"): raise gr.Error("Error de Lectura", text1)
@@ -192,19 +191,20 @@ def process_documents(api_key, file1, file2):
         yield no_report, no_file, f"Analizando requisito {i+1}/{total_items}: {requirement}..."
         analysis_result = analyze_requirement(model, requirement, consolidated_text, filename1, filename2)
         final_results.append({"requisito": requirement, "resultado": analysis_result})
-        time.sleep(1) # Pausa reducida
+        time.sleep(1)
 
     yield no_report, no_file, "Generando reporte final..."
     html_report = create_html_report(summary, final_results)
     
+    # <--- CAMBIO 2: Guardar el reporte en un archivo temporal ---
     with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.html', encoding='utf-8') as temp_file:
         temp_file.write(html_report)
         temp_filepath = temp_file.name
 
-    # <--- CAMBIO 4: El "return" final se convierte en el último "yield" con todos los resultados ---
+    # El "return" final se convierte en el último "yield" con todos los resultados
     yield html_report, temp_filepath, "✅ ¡Proceso completado!"
 
-# --- INTERFAZ DE GRADIO MODIFICADA ---
+# --- INTERFAZ DE GRADIO ---
 with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", secondary_hue="neutral"), title="Revisor CGR") as demo:
     gr.Markdown(
         """
@@ -225,15 +225,15 @@ with gr.Blocks(theme=gr.themes.Soft(primary_hue="blue", secondary_hue="neutral")
             file_input1 = gr.File(label="1. Resumen del Sistema (SICOP)", file_types=[".pdf"])
             file_input2 = gr.File(label="2. Pliego de Condiciones (Cartel)", file_types=[".pdf"])
             submit_btn = gr.Button("Analizar Documentos", variant="primary")
-            # <--- CAMBIO 5: Añadir un campo de texto para mostrar el estado del proceso ---
             status_textbox = gr.Textbox(label="Estado del Proceso", interactive=False)
             
         with gr.Column(scale=3):
             gr.Markdown("### 📋 Reporte Generado")
             output_html = gr.HTML(label="Vista Previa del Reporte")
+            # <--- CAMBIO 3: Añadir un componente de archivo para la descarga ---
             download_file = gr.File(label="Descargar Reporte Completo", interactive=False)
 
-    # <--- CAMBIO 6: Actualizar el evento click para que maneje tres salidas ---
+    # <--- CAMBIO 4: Actualizar el evento click para que maneje las tres salidas ---
     submit_btn.click(
         fn=process_documents,
         inputs=[api_key_input, file_input1, file_input2],
